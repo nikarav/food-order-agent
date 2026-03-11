@@ -1,0 +1,67 @@
+scenarios:
+  - name: "Simple order with modification"
+    turns:
+      - user: "I'd like a large classic burger with cheese and bacon"
+        expect_intent: add_item
+        expect_order_items: 1
+        expect_total: 13.00
+      - user: "Actually, remove the bacon"
+        expect_intent: modify_item
+        expect_total: 11.50
+      - user: "That's it"
+        expect_intent: confirm_order
+      - user: "Yes"
+        expect_intent: submit_order
+        expect_tool_call: submit_order
+
+  - name: "Multiple items"
+    turns:
+      - user: "I want medium fries and a cola"
+        expect_order_items: 2
+      - user: "Make the cola large"
+        expect_intent: modify_item
+        expect_total: 6.25
+      - user: "That's it"
+        expect_intent: confirm_order
+      - user: "Yes"
+        expect_tool_call: submit_order
+
+  - name: "Remove item from order"
+    turns:
+      - user: "One classic burger and some fries"
+        expect_order_items: 2
+      - user: "Remove the fries"
+        expect_intent: remove_item
+        expect_order_items: 1
+
+  - name: "Empty order submit attempt"
+    turns:
+      - user: "Submit my order"
+        expect_error: true
+
+  - name: "Cancel and restart"
+    turns:
+      - user: "Give me a spicy burger"
+        expect_order_items: 1
+      - user: "Actually cancel everything"
+        expect_intent: cancel_order
+        expect_order_items: 0
+
+  - name: "Off-topic message"
+    turns:
+      - user: "What's the weather like today?"
+        expect_no_order_change: true
+
+  - name: "Greeting"
+    turns:
+      - user: "Hello!"
+        expect_intent: greeting
+        expect_order_items: 0
+
+  - name: "View order"
+    turns:
+      - user: "Give me medium fries"
+        expect_order_items: 1
+      - user: "What's in my order?"
+        expect_intent: view_order
+        expect_order_items: 1
