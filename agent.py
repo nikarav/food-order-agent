@@ -5,14 +5,14 @@ Orchestrates tool-calling loop: LLM picks tools → ToolExecutor runs them deter
 
 import asyncio
 
-from config.configs import load_configurations
-from src.log.logger import ConversationLogger
-from src.log.trace import ConversationTrace
-from src.llm.gemini import GeminiClient
-from src.mcp.client import MCPClient
-from src.models.menu import Menu
-from src.order.manager import OrderManager
-from src.tools.executor import ToolExecutor
+from orderbot.llm.gemini import GeminiClient
+from orderbot.utils.logger import ConversationLogger
+from orderbot.utils.trace import ConversationTrace
+from orderbot.mcp.client import MCPClient
+from orderbot.models.menu import Menu
+from orderbot.order.manager import OrderManager
+from orderbot.tools.executor import ToolExecutor
+from orderbot.utils.config import load_configurations
 
 MAX_HISTORY_TURNS = 20
 
@@ -38,7 +38,13 @@ class FoodOrderAgent:
         self._loop = asyncio.new_event_loop()
 
     def send(self, message: str) -> dict:
-        """Process user message synchronously. Returns response dict."""
+        """
+        Process user message synchronously. Returns response dict.
+
+        :param message: The user's message
+        :return: A dictionary containing the final natural language response,
+                 all tools executed this turn, and the content objects to append to history
+        """
         return self._loop.run_until_complete(self._process(message))
 
     def __del__(self):
@@ -60,8 +66,8 @@ class FoodOrderAgent:
             tool_executor=self.tool_executor,
         )
 
-        # Extend conversation history
-        self._history.extend(result["history_additions"])
+        # Compress turn to user + final model text only, then append + trim
+        self._history.extend(self._compress_turn(result["history_additions"]))
         self._trim_history()
 
         # Check if submit_order sentinel was returned — do the real MCP call
@@ -95,19 +101,50 @@ class FoodOrderAgent:
                 self._awaiting_confirmation = False
 
         self._log(message, result["tool_calls_made"], result["text"], mcp_tool_calls)
-        return self._build_response(result["text"], mcp_tool_calls)
+        return self._build_response(result["text"], mcp_tool_calls, result["tool_calls_made"])
 
     # --- Helpers ---
 
-    def _trim_history(self) -> None:
-        """Keep last MAX_HISTORY_TURNS user+model pairs to cap context size."""
-        if len(self._history) > MAX_HISTORY_TURNS * 2:
-            self._history = self._history[-(MAX_HISTORY_TURNS * 2):]
+    @staticmethod
+    def _compress_turn(history_additions: list) -> list:
+        """
+        Compress a completed turn down to [user_message, final_model_text].
 
-    def _build_response(self, message: str, tool_calls: list | None = None) -> dict:
+        Tool FC batches and tool-result contents are dropped because:
+        - The current order state is re-injected via order_snapshot every turn.
+        - Old add_item / modify_item call chains carry zero additional signal.
+        - Dropping them cuts per-turn history cost by ~75% for tool-heavy turns.
+
+        history_additions layout (variable length):
+          [user_content, model_FC, tool_results, ..., final_model_text]
+        We always keep first (user) and last (final model text).
+        """
+        if len(history_additions) <= 2:
+            return history_additions
+        return [history_additions[0], history_additions[-1]]
+
+    def _trim_history(self) -> None:
+        """
+        Hard cap: keep at most MAX_HISTORY_TURNS turns in history.
+
+        After compression each turn is exactly 2 Content objects, so
+        simple len() / 2 arithmetic is reliable again.
+        """
+        max_objects = MAX_HISTORY_TURNS * 2
+        if len(self._history) > max_objects:
+            self._history = self._history[-max_objects:]
+
+    def _build_response(
+        self,
+        message: str,
+        tool_calls: list | None = None,
+        tool_calls_made: list | None = None,
+    ) -> dict:
         result: dict = {"message": message}
         if tool_calls:
             result["tool_calls"] = tool_calls
+        if tool_calls_made:
+            result["_tool_calls_made"] = tool_calls_made  # debug; prefixed with _ (not in spec)
         return result
 
     def _log(
