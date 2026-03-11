@@ -6,7 +6,7 @@ Run with: pytest tests/integration/ -v
 
 import pytest
 
-from src.mcp.client import MCPClient
+from orderbot.mcp.client import MCPClient
 
 
 @pytest.fixture

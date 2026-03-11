@@ -1,4 +1,4 @@
-from src.models.intent import IntentType, ParsedIntent
+from orderbot.models.intent import IntentType, ParsedIntent
 
 
 def test_intent_type_values():

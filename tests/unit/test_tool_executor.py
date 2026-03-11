@@ -1,8 +1,8 @@
 import pytest
 
-from src.models.menu import Menu
-from src.order.manager import OrderManager
-from src.tools.executor import ToolExecutor
+from orderbot.models.menu import Menu
+from orderbot.order.manager import OrderManager
+from orderbot.tools.executor import ToolExecutor
 
 
 @pytest.fixture

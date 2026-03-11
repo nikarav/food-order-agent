@@ -1,6 +1,6 @@
 import pytest
 
-from src.models.menu import Menu
+from orderbot.models.menu import Menu
 
 
 @pytest.fixture
