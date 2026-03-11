@@ -11,4 +11,4 @@ mcp:
   server_url: https://webviews-git-moveo-food-nlp-assignment-moveo-ai.vercel.app/api/demo/mcp
 
 prompts:
-  dir: prompts/v2
+  system: prompts/v2/system.txt
