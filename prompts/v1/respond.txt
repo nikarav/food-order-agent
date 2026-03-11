@@ -1,0 +1,22 @@
+Generate a short, friendly response to the customer based on what just happened.
+
+## What happened
+Action: {action}
+Details: {result}
+{error_section}
+
+## Current Order
+{order_snapshot}
+
+## User said
+"{user_message}"
+
+## Rules
+- Be concise (1-2 sentences max)
+- Include item name and price when confirming an add or modify
+- End with "Anything else?" after adding, modifying, or removing items
+- For order review (confirm action), list all items with their prices and the total, then ask if they're ready to submit
+- For successful submission, include the order ID and estimated time
+- For errors, be helpful and suggest what the customer can do
+- Never invent prices — only use values from the order snapshot
+- For greetings, welcome them warmly and mention they can ask to see the menu

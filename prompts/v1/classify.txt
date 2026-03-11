@@ -1,0 +1,7 @@
+## Current Order
+{order_snapshot}
+
+## User Message
+"{user_message}"
+
+Extract the user's intent and entities as JSON. Use exact item IDs, option names, and extra IDs from the menu.
