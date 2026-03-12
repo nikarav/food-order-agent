@@ -7,6 +7,7 @@ from google.genai import types
 
 from orderbot.llm.base import LLMClient
 from orderbot.tools.declarations import ORDER_TOOLS
+from orderbot.utils.observability import get_langfuse_client
 
 logger = logging.getLogger(__name__)
 
@@ -23,6 +24,7 @@ class GeminiClient(LLMClient):
         self.client = genai.Client(api_key=config.gemini_api_key)
         self.model = config.model_name
         self.temperature = config.temperature
+        self._max_retries = int(getattr(config, "max_retries", 2))
         with open(config.prompts.system) as f:
             self._system_template = f.read()
 
@@ -48,6 +50,19 @@ class GeminiClient(LLMClient):
         :return: A dictionary containing the final natural language response,
                 all tools executed this turn, and the content objects to append to history
         """
+        lf = get_langfuse_client()
+        with lf.start_as_current_observation(
+            name="process_turn", as_type="span", input=user_message,
+        ) as span:
+            result = await self._process_turn_inner(
+                user_message, order_snapshot, menu_text, history, tool_executor, lf,
+            )
+            span.update(output=result["text"])
+            return result
+
+    async def _process_turn_inner(
+        self, user_message, order_snapshot, menu_text, history, tool_executor, lf,
+    ) -> dict:
         system = self._build_system_prompt(menu_text, order_snapshot)
         user_content = types.Content(
             role="user",
@@ -59,16 +74,22 @@ class GeminiClient(LLMClient):
         tool_calls_made = []
 
         try:
-            response = await self._generate(contents, system)
+            response = await self._generate(contents, system, lf)
+
+            # Retry on empty response (model returned STOP but no content)
+            for _retry in range(self._max_retries):
+                if response.function_calls or self._has_text(response):
+                    break
+                logger.debug("empty response from model, retry %d/%d", _retry + 1, self._max_retries)
+                response = await self._generate(contents, system, lf)
 
             # Tool-calling loop — each iteration may produce parallel calls
             while response.function_calls:
                 model_content = response.candidates[0].content
                 history_additions.append(model_content)
 
-                # Execute all function calls for this iteration in parallel
                 tasks = [
-                    self._run_tool(tool_executor, fc.name, dict(fc.args) if fc.args else {})
+                    self._run_tool(lf, tool_executor, fc.name, dict(fc.args) if fc.args else {})
                     for fc in response.function_calls
                 ]
                 results = await asyncio.gather(*tasks)
@@ -84,17 +105,22 @@ class GeminiClient(LLMClient):
                 tool_response_content = types.Content(role="user", parts=function_response_parts)
                 history_additions.append(tool_response_content)
 
-                response = await self._generate(list(history) + history_additions, system)
+                response = await self._generate(list(history) + history_additions, system, lf)
 
             # Final text response
             final_content = response.candidates[0].content
-            history_additions.append(final_content)
-            text = (response.text or "").strip() or self._fallback_response(tool_calls_made)
+            if final_content and getattr(final_content, "parts", None) is not None:
+                history_additions.append(final_content)
+            text_raw = ""
+            try:
+                text_raw = (response.text or "").strip()
+            except Exception:
+                pass
+            text = text_raw or self._fallback_response(tool_calls_made)
 
         except Exception as e:
             logger.warning(f"process_turn failed ({e}), returning fallback")
             text = self._fallback_response(tool_calls_made)
-            # Still add user message to history so context isn't lost
             history_additions = [user_content]
 
         return {
@@ -105,36 +131,88 @@ class GeminiClient(LLMClient):
 
     # --- Private helpers ---
 
-    async def _generate(self, contents: list, system: str):
+    async def _generate(self, contents: list, system: str, lf=None):
         """
         Single Gemini API call with shared model config.
 
         :param contents: The contents to generate
         :param system: The system prompt
+        :param lf: Langfuse client (passed from parent to stay in trace context)
         :return: The generated content
         """
-        return await self.client.aio.models.generate_content(
+        lf = lf or get_langfuse_client()
+        lf_input = self._last_text(contents)
+        with lf.start_as_current_observation(
+            name="gemini_generate",
+            as_type="generation",
             model=self.model,
-            contents=contents,
-            config=types.GenerateContentConfig(
-                system_instruction=system,
-                tools=[ORDER_TOOLS],
-                automatic_function_calling=_AUTO_FC_OFF,
-                temperature=self.temperature,
-            ),
-        )
+            model_parameters={"temperature": self.temperature},
+            input=lf_input,
+        ) as gen:
+            response = await self.client.aio.models.generate_content(
+                model=self.model,
+                contents=contents,
+                config=types.GenerateContentConfig(
+                    system_instruction=system,
+                    tools=[ORDER_TOOLS],
+                    automatic_function_calling=_AUTO_FC_OFF,
+                    temperature=self.temperature,
+                    thinking_config=types.ThinkingConfig(thinking_budget=0),
+                ),
+            )
+            # Output: text response, or list of function calls if this is a tool-calling turn
+            if response.function_calls:
+                lf_output = [
+                    {"name": fc.name, "args": dict(fc.args) if fc.args else {}}
+                    for fc in response.function_calls
+                ]
+            else:
+                lf_output = response.text or ""
+            usage = getattr(response, "usage_metadata", None)
+            gen.update(
+                output=lf_output,
+                usage_details={
+                    "input": getattr(usage, "prompt_token_count", 0) or 0,
+                    "output": getattr(usage, "candidates_token_count", 0) or 0,
+                    "total": getattr(usage, "total_token_count", 0) or 0,
+                } if usage else {},
+            )
+            return response
 
     @staticmethod
-    async def _run_tool(tool_executor, name: str, args: dict) -> dict:
+    def _has_text(response) -> bool:
+        """Check if the response contains any non-empty text."""
+        try:
+            return bool((response.text or "").strip())
+        except Exception:
+            return False
+
+    @staticmethod
+    def _last_text(contents: list) -> str:
+        """Extract the text of the last content part (used as Langfuse generation input)."""
+        if not contents:
+            return ""
+        for part in getattr(contents[-1], "parts", []):
+            text = getattr(part, "text", None)
+            if text:
+                return text
+        return ""
+
+    @staticmethod
+    async def _run_tool(lf, tool_executor, name: str, args: dict) -> dict:
         """
         Run one tool call in a thread pool so parallel calls don't block each other.
 
+        :param lf: Langfuse client (passed from parent to stay in trace context)
         :param tool_executor: The tool executor
         :param name: The name of the tool to execute
         :param args: The arguments to the tool
         :return: The result of the tool execution
         """
-        return await asyncio.to_thread(tool_executor.execute, name, args)
+        with lf.start_as_current_observation(name=f"tool:{name}", as_type="tool") as span:
+            result = await asyncio.to_thread(tool_executor.execute, name, args)
+            span.update(output=result)
+            return result
 
     def _build_system_prompt(self, menu_text: str, order_snapshot: dict) -> str:
         """
