@@ -8,15 +8,17 @@ logger = logging.getLogger(__name__)
 class ToolExecutor:
     """Bridges LLM tool calls to deterministic OrderManager operations."""
 
-    def __init__(self, order_manager: OrderManager, menu_text: str):
+    def __init__(self, order_manager: OrderManager, menu_text: str, menu_display_text: str = ""):
         """
         Initialize the ToolExecutor.
 
         :param order_manager: The order manager
-        :param menu_text: The menu text
+        :param menu_text: The menu text for LLM prompts
+        :param menu_display_text: Human-readable menu text for customer display
         """
         self._om = order_manager
         self._menu_text = menu_text
+        self._menu_display_text = menu_display_text or menu_text
 
     def execute(self, tool_name: str, tool_args: dict) -> dict:
         """
@@ -116,7 +118,7 @@ class ToolExecutor:
         :param args: The arguments to the tool
         :return: A dictionary containing the result of the tool execution
         """
-        return {"status": "show_menu", "menu": self._menu_text}
+        return {"status": "show_menu", "menu": self._menu_display_text}
 
     def _exec_confirm_order(self, args: dict) -> dict:
         """
