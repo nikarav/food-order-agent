@@ -15,8 +15,14 @@ _AUTO_FC_OFF = types.AutomaticFunctionCallingConfig(disable=True)
 
 class GeminiClient(LLMClient):
     def __init__(self, config):
+        """
+        Initialize the GeminiClient.
+
+        :param config: The configuration
+        """
         self.client = genai.Client(api_key=config.gemini_api_key)
         self.model = config.model_name
+        self.temperature = config.temperature
         with open(config.prompts.system) as f:
             self._system_template = f.read()
 
@@ -83,7 +89,7 @@ class GeminiClient(LLMClient):
             # Final text response
             final_content = response.candidates[0].content
             history_additions.append(final_content)
-            text = (response.text or "").strip() or "How can I help you?"
+            text = (response.text or "").strip() or self._fallback_response(tool_calls_made)
 
         except Exception as e:
             logger.warning(f"process_turn failed ({e}), returning fallback")
@@ -100,7 +106,13 @@ class GeminiClient(LLMClient):
     # --- Private helpers ---
 
     async def _generate(self, contents: list, system: str):
-        """Single Gemini API call with shared model config."""
+        """
+        Single Gemini API call with shared model config.
+
+        :param contents: The contents to generate
+        :param system: The system prompt
+        :return: The generated content
+        """
         return await self.client.aio.models.generate_content(
             model=self.model,
             contents=contents,
@@ -108,16 +120,30 @@ class GeminiClient(LLMClient):
                 system_instruction=system,
                 tools=[ORDER_TOOLS],
                 automatic_function_calling=_AUTO_FC_OFF,
-                temperature=0.7,
+                temperature=self.temperature,
             ),
         )
 
     @staticmethod
     async def _run_tool(tool_executor, name: str, args: dict) -> dict:
-        """Run one tool call in a thread pool so parallel calls don't block each other."""
+        """
+        Run one tool call in a thread pool so parallel calls don't block each other.
+
+        :param tool_executor: The tool executor
+        :param name: The name of the tool to execute
+        :param args: The arguments to the tool
+        :return: The result of the tool execution
+        """
         return await asyncio.to_thread(tool_executor.execute, name, args)
 
     def _build_system_prompt(self, menu_text: str, order_snapshot: dict) -> str:
+        """
+        Build the system prompt.
+
+        :param menu_text: The menu text
+        :param order_snapshot: The order snapshot
+        :return: The system prompt
+        """
         return self._system_template.format_map(
             {
                 "menu": menu_text,
@@ -126,6 +152,12 @@ class GeminiClient(LLMClient):
         )
 
     def _fallback_response(self, tool_calls_made: list) -> str:
+        """
+        Build the fallback response.
+
+        :param tool_calls_made: The tool calls made
+        :return: The fallback response
+        """
         if not tool_calls_made:
             return "How can I help you?"
         last = tool_calls_made[-1]
@@ -145,7 +177,29 @@ class GeminiClient(LLMClient):
                 return f"Order submitted! Order #{mcp.get('order_id')}."
             return f"Submission failed: {mcp.get('error', 'unknown error')}."
         if name == "confirm_order":
+            summary = result.get("summary_text", "")
+            if summary:
+                return f"{summary}\n\nReady to submit?"
             return "Here's your order. Ready to submit?"
         if name == "cancel_order":
             return "Order cancelled. Start fresh whenever you're ready!"
+        if name == "get_menu":
+            menu = result.get("menu", "")
+            if menu:
+                return menu
+            return "Sorry, the menu is currently unavailable."
+        if name == "view_order":
+            order = result.get("order", {})
+            if order.get("items"):
+                lines = []
+                for item in order["items"]:
+                    lines.append(
+                        f"  - {item['name']} x{item['quantity']} — ${item['line_total']:.2f}"
+                    )
+                lines.append(f"  Total: ${order['total']:.2f}")
+                return "Here's your current order:\n" + "\n".join(lines)
+            return "Your order is empty."
+        if name == "set_special_instructions":
+            instructions = result.get("instructions", "")
+            return f'Special instructions noted: "{instructions}". Anything else?'
         return "Done! Anything else?"
