@@ -6,7 +6,7 @@ def configure_logging(log_level: str = "INFO") -> None:
         processors=[
             structlog.processors.TimeStamper(fmt="iso"),
             structlog.processors.add_log_level,
-            structlog.processors.JSONRenderer(),
+            structlog.dev.ConsoleRenderer(),
         ],
         wrapper_class=structlog.make_filtering_bound_logger(
             getattr(__import__("logging"), log_level, 20)
@@ -29,12 +29,18 @@ class ConversationLogger:
         order_snapshot: dict | None = None,
     ) -> None:
         self.turn_count += 1
-        self._log.info(
+        tool_summary = []
+        for tc in tool_calls_made:
+            args = tc.get("args", {})
+            arg_str = ", ".join(f"{k}={v!r}" for k, v in args.items()) if args else ""
+            status = tc["result"].get("status", tc["result"].get("error", "?"))
+            tool_summary.append(f"{tc['name']}({arg_str}) → {status}")
+
+        self._log.debug(
             "conversation_turn",
             turn=self.turn_count,
-            user_message=user_message,
-            tool_calls_made=tool_calls_made,
+            user=user_message,
+            tools=tool_summary or None,
             response=response,
-            mcp_tool_calls=mcp_tool_calls,
-            order_snapshot=order_snapshot,
+            mcp=mcp_tool_calls is not None,
         )
