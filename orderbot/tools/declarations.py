@@ -31,6 +31,10 @@ add_item_decl = types.FunctionDeclaration(
                 "items": {"type": "string"},
                 "description": "Extra topping/add-on IDs (e.g. [\"cheese\", \"bacon\"])",
             },
+            "special_instructions": {
+                "type": "string",
+                "description": "Item-level special instructions (e.g. 'no onions', 'sauce on the side')",
+            },
         },
         "required": ["item_id"],
     },
@@ -86,7 +90,7 @@ modify_item_decl = types.FunctionDeclaration(
 
 remove_item_decl = types.FunctionDeclaration(
     name="remove_item",
-    description="Remove an item from the order entirely.",
+    description="Remove an item from the order entirely. For removing multiple items, call once per item.",
     parameters_json_schema={
         "type": "object",
         "properties": {
