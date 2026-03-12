@@ -42,27 +42,32 @@ def _run_text_mode() -> None:
     hint = "Type [bold]quit[/bold] to exit  •  [bold]VERBOSE=1[/bold] to see tool calls"
     console.print(hint + "\n")
 
-    while True:
-        try:
-            user_input = input("You: ").strip()
-        except (EOFError, KeyboardInterrupt):
-            console.print(Panel.fit("Goodbye!", border_style="cyan"))
-            break
+    try:
+        while True:
+            try:
+                user_input = input("You: ").strip()
+            except (EOFError, KeyboardInterrupt):
+                console.print(Panel.fit("Goodbye!", border_style="cyan"))
+                break
 
-        if not user_input:
-            continue
+            if not user_input:
+                continue
 
-        if user_input.lower() in ("quit", "exit", "q"):
-            console.print(Panel.fit("Goodbye!", border_style="cyan"))
-            break
+            if user_input.lower() in ("quit", "exit", "q"):
+                console.print(Panel.fit("Goodbye!", border_style="cyan"))
+                break
 
-        response = agent.send(user_input)
+            response = agent.send(user_input)
 
-        if VERBOSE:
-            _print_tool_calls(response)
+            if VERBOSE:
+                _print_tool_calls(response)
 
-        console.print(Panel(Markdown(response["message"]), title="Assistant", border_style="green"))
-        console.print(Rule(style="dim"))
+            console.print(
+                Panel(Markdown(response["message"]), title="Assistant", border_style="green")
+            )
+            console.print(Rule(style="dim"))
+    finally:
+        agent.shutdown()
 
 
 def _run_voice_mode() -> None:
@@ -99,6 +104,8 @@ def _run_voice_mode() -> None:
             f"[yellow]Voice mode unavailable:[/yellow] {exc}\nFalling back to text mode.\n"
         )
         _run_text_mode()
+    finally:
+        agent.shutdown()
 
 
 def main() -> None:
