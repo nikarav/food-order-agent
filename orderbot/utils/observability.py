@@ -26,12 +26,6 @@ _client = None
 def _init() -> None:
     global LANGFUSE_ENABLED, _client
 
-    try:
-        import langfuse as _lf  # noqa: F401
-    except ImportError:
-        logger.debug("langfuse not installed — observability disabled")
-        return
-
     if not (os.environ.get("LANGFUSE_PUBLIC_KEY") and os.environ.get("LANGFUSE_SECRET_KEY")):
         logger.debug("LANGFUSE_PUBLIC_KEY / LANGFUSE_SECRET_KEY not set — observability disabled")
         return
@@ -42,6 +36,8 @@ def _init() -> None:
         _client = Langfuse()
         LANGFUSE_ENABLED = True
         logger.info("Langfuse observability enabled")
+    except ImportError:
+        logger.debug("langfuse not installed — observability disabled")
     except Exception as exc:
         logger.warning("Failed to initialize Langfuse: %s", exc)
 
