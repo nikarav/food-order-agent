@@ -142,7 +142,10 @@ class ToolExecutor:
                 desc += f" + {extras}"
             qty = item["quantity"]
             line_total = item["line_total"]
-            lines.append(f"  • {desc} x{qty} — ${line_total:.2f}")
+            line = f"  • {desc} x{qty} — ${line_total:.2f}"
+            if item.get("special_instructions"):
+                line += f'  [note: {item["special_instructions"]}]'
+            lines.append(line)
         lines.append(f"  Total: ${snapshot['total']:.2f}")
         summary_text = "\n".join(lines)
         return {
