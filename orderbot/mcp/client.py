@@ -52,7 +52,11 @@ class MCPClient:
                         result.content[0].text if result.content else "Unknown MCP error"
                     )
                     logger.error(f"MCP tool returned error: {error_text}")
-                    return {"success": False, "error": error_text}
+                    # Raise so the retry loop in submit_order can attempt again.
+                    # Server-side business errors (e.g. order limit exceeded) also come
+                    # through isError, but retrying them is harmless — they'll fail fast
+                    # and the final attempt will surface the error to the user.
+                    raise RuntimeError(error_text)
 
                 if not result.content:
                     return {"success": False, "error": "Empty response from MCP server"}
