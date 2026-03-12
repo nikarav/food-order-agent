@@ -13,3 +13,25 @@ mcp:
 
 prompts:
   system: prompts/v2/system.txt
+
+voice:
+  elevenlabs_api_key: ${ELEVENLABS_API_KEY}
+  voice_id: "JBFqnCBsd6RMkjVDRZzb"
+  model_id: "eleven_flash_v2_5"
+  output_format: "pcm_16000"
+  sample_rate: 16000
+  silence_threshold_ms: 700
+  enable_barge_in: true
+  post_playback_cooldown_ms: 300
+  vad:
+    aggressiveness: 3
+    min_speech_ms: 400
+    frame_duration_ms: 20
+    pre_speech_buffer_ms: 200
+  stt:
+    model_id: "scribe_v1"
+    language_code: "en"
+  tts:
+    sentence_pause_ms: 0
+  aec:
+    stream_delay_ms: 40

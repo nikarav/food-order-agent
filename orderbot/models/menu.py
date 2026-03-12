@@ -114,6 +114,39 @@ class Menu(BaseModel):
             data = yaml.safe_load(f)
         return cls(items=[MenuItem(**item) for item in data["menu"]])
 
+    def to_display_string(self) -> str:
+        """
+        Render the menu as clean, human-readable text for customer display.
+
+        :return: Formatted menu string
+        """
+        lines = []
+        for item in self.items:
+            lines.append(f"  {item.name} — ${item.base_price:.2f}")
+
+            size_opt = item.options.get("size")
+            if size_opt and size_opt.price_modifier:
+                sizes = []
+                for choice in size_opt.choices:
+                    mod = size_opt.price_modifier.get(choice, 0)
+                    total = item.base_price + mod
+                    sizes.append(f"{choice} ${total:.2f}")
+                lines.append(f"    Sizes: {', '.join(sizes)}")
+
+            for opt_name, opt in item.options.items():
+                if opt_name == "size":
+                    continue
+                choices = ", ".join(c.replace("_", " ") for c in opt.choices)
+                lines.append(f"    {opt_name.replace('_', ' ').title()}: {choices}")
+
+            extras = item.get_extras_list()
+            if extras:
+                extras_str = ", ".join(f"{e.id.replace('_', ' ')} (+${e.price:.2f})" for e in extras)
+                lines.append(f"    Add-ons: {extras_str}")
+
+            lines.append("")
+        return "\n".join(lines)
+
     def to_prompt_string(self) -> str:
         """
         Render the menu as structured text for LLM prompts.

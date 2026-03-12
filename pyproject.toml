@@ -3,6 +3,7 @@ name = "food-order-agent"
 version = "0.1.0"
 description = "Conversational food ordering agent with MCP integration"
 requires-python = ">=3.11"
+
 dependencies = [
     "google-genai==1.66.0",
     "httpx==0.28.1",
@@ -14,11 +15,21 @@ dependencies = [
     "structlog==25.5.0",
 ]
 
+[tool.setuptools.packages.find]
+include = ["orderbot*"]
+
 [project.optional-dependencies]
 dev = [
     "pytest==9.0.2",
     "pytest-asyncio==1.3.0",
     "ruff==0.15.5",
+]
+voice = [
+    "elevenlabs==2.38.1",
+    "livekit==1.1.2",
+    "sounddevice==0.5.5",
+    "numpy==2.4.3",
+    "webrtcvad-wheels==2.0.14",
 ]
 
 [tool.ruff]
