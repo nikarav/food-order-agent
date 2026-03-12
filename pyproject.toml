@@ -19,17 +19,21 @@ dependencies = [
 include = ["orderbot*"]
 
 [project.optional-dependencies]
-dev = [
-    "pytest==9.0.2",
-    "pytest-asyncio==1.3.0",
-    "ruff==0.15.5",
-]
-voice = [
+# All optional runtime features (voice + observability)
+all = [
     "elevenlabs==2.38.1",
     "livekit==1.1.2",
     "sounddevice==0.5.5",
     "numpy==2.4.3",
     "webrtcvad-wheels==2.0.14",
+    "langfuse==4.0.0",
+]
+# Development tools (tests + linting)
+dev = [
+    "numpy==2.4.3",
+    "pytest==9.0.2",
+    "pytest-asyncio==1.3.0",
+    "ruff==0.15.5",
 ]
 
 [tool.ruff]
