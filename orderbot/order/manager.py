@@ -155,29 +155,31 @@ class OrderManager:
 
     def get_snapshot(self) -> dict:
         """Return a serializable snapshot of the current order."""
-        return {
-            "items": [
-                {
-                    "uid": item.uid,
-                    "name": item.name,
-                    "quantity": item.quantity,
-                    "options": item.options,
-                    "extras": item.extras,
-                    "unit_price": item.unit_price,
-                    "line_total": round(item.unit_price * item.quantity, 2),
-                }
-                for item in self.order.items
-            ],
-            "total": self.order.total,
-            "item_count": len(self.order.items),
-            "special_instructions": self.order.special_instructions,
-        }
+        with self._lock:
+            return {
+                "items": [
+                    {
+                        "uid": item.uid,
+                        "name": item.name,
+                        "quantity": item.quantity,
+                        "options": item.options,
+                        "extras": item.extras,
+                        "unit_price": item.unit_price,
+                        "line_total": round(item.unit_price * item.quantity, 2),
+                    }
+                    for item in self.order.items
+                ],
+                "total": self.order.total,
+                "item_count": len(self.order.items),
+                "special_instructions": self.order.special_instructions,
+            }
 
     def pre_submit_check(self) -> str | None:
         """Returns an error message if the order can't be submitted, else None."""
-        if self.order.is_empty:
-            return "Your order is empty."
-        return None
+        with self._lock:
+            if self.order.is_empty:
+                return "Your order is empty."
+            return None
 
     # --- Private helpers ---
 
