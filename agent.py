@@ -28,7 +28,10 @@ class FoodOrderAgent:
         self.llm = GeminiClient(config)
         self.mcp = MCPClient(config)
         self.menu_text = self.menu.to_prompt_string()
-        self.tool_executor = ToolExecutor(self.order_manager, self.menu_text)
+        self.menu_display_text = self.menu.to_display_string()
+        self.tool_executor = ToolExecutor(
+            self.order_manager, self.menu_text, self.menu_display_text
+        )
         self.logger = ConversationLogger(config.log_level)
         self.trace = ConversationTrace()
 
