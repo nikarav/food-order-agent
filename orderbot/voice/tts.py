@@ -25,6 +25,25 @@ logger = logging.getLogger(__name__)
 # Sentence boundary: period/exclamation/question followed by whitespace or end of string
 _SENTENCE_END = re.compile(r"(?<=[.!?])\s+|(?<=[.!?])$")
 
+_TTS_NORMALIZATIONS = [
+    # $12.50 → "12 dollars and 50 cents"
+    (re.compile(r"\$(\d+)\.(\d{2})"), r"\1 dollars and \2 cents"),
+    # $7 → "7 dollars"
+    (re.compile(r"\$(\d+)"), r"\1 dollars"),
+    # x1 / ×1 → remove (quantity of 1 is implied)
+    (re.compile(r"\s*[x×]1(?!\d)"), ""),
+    # x2, ×3 → "times 2", "times 3"
+    (re.compile(r"[x×](\d+)"), r"times \1"),
+]
+
+
+def normalize_for_tts(text: str) -> str:
+    """Replace symbols with spoken equivalents for natural TTS output."""
+    for pattern, repl in _TTS_NORMALIZATIONS:
+        text = pattern.sub(repl, text)
+    return text
+
+
 # Protect common abbreviations and price decimals from being split
 _PROTECT = [
     (re.compile(r"\bMr\."), "Mr\x00"),
@@ -186,11 +205,9 @@ class ElevenLabsTTS:
         :param text: Sentence to synthesise
         :return: PCM int16 bytes at sample_rate
         """
-        # AsyncElevenLabs.text_to_speech.convert() returns an async generator,
-        # not a coroutine — collect chunks directly.
         audio_stream = self._client.text_to_speech.convert(
             voice_id=self._voice_id,
-            text=text,
+            text=normalize_for_tts(text),
             model_id=self._model_id,
             output_format=self._output_format,
         )
