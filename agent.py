@@ -5,17 +5,18 @@ Orchestrates tool-calling loop: LLM picks tools → ToolExecutor runs them deter
 
 import asyncio
 import logging
+from uuid import uuid4
 
 from orderbot.llm.gemini import GeminiClient
-from orderbot.utils.logger import ConversationLogger
-
-logger = logging.getLogger(__name__)
-from orderbot.utils.trace import ConversationTrace
 from orderbot.mcp.client import MCPClient
 from orderbot.models.menu import Menu
 from orderbot.order.manager import OrderManager
 from orderbot.tools.executor import ToolExecutor
 from orderbot.utils.config import load_configurations
+from orderbot.utils.logger import ConversationLogger
+from orderbot.utils.observability import get_langfuse_client, propagate_attributes, shutdown_langfuse
+
+logger = logging.getLogger(__name__)
 
 MAX_HISTORY_TURNS = 20
 
@@ -33,7 +34,7 @@ class FoodOrderAgent:
             self.order_manager, self.menu_text, self.menu_display_text
         )
         self.logger = ConversationLogger(config.log_level)
-        self.trace = ConversationTrace()
+        self._session_id = uuid4().hex
 
         # Tracks whether confirm_order was called — gates submit_order
         self._awaiting_confirmation = False
@@ -53,6 +54,14 @@ class FoodOrderAgent:
         """
         return self._loop.run_until_complete(self._process(message))
 
+    def shutdown(self) -> None:
+        """Flush Langfuse data and close the event loop."""
+        shutdown_langfuse()
+        try:
+            self._loop.close()
+        except Exception:
+            pass
+
     def __del__(self):
         try:
             self._loop.close()
@@ -62,6 +71,16 @@ class FoodOrderAgent:
     # --- Async core ---
 
     async def _process(self, message: str) -> dict:
+        lf = get_langfuse_client()
+        with propagate_attributes(session_id=self._session_id, trace_name="turn"):
+            with lf.start_as_current_observation(
+                name="agent", as_type="span", input=message,
+            ) as agent_span:
+                response = await self._run_turn(message, lf)
+                agent_span.update(output=response["message"])
+                return response
+
+    async def _run_turn(self, message: str, lf) -> dict:
         snapshot = self.order_manager.get_snapshot()
 
         result = await self.llm.process_turn(
@@ -72,7 +91,6 @@ class FoodOrderAgent:
             tool_executor=self.tool_executor,
         )
 
-        # Compress turn to [user_msg, final_model_text] — order_snapshot re-injected each turn
         self._history.extend(self._compress_turn(result["history_additions"]))
         self._trim_history()
 
@@ -82,7 +100,6 @@ class FoodOrderAgent:
             if tc["name"] == "submit_order":
                 if tc["result"].get("status") == "ready_to_submit":
                     if not self._awaiting_confirmation:
-                        # LLM called submit without confirm — override response
                         result["text"] = (
                             "Please review your order first before submitting. "
                             "Just say \"that's it\" when you're done adding items."
@@ -90,7 +107,11 @@ class FoodOrderAgent:
                         break
                     payload = self.order_manager.order.to_submit_payload()
                     logger.debug("submitting order payload: %s", payload)
-                    mcp_result = await self.mcp.submit_order(payload)
+                    with lf.start_as_current_observation(
+                        name="mcp_submit_order", as_type="span"
+                    ) as span:
+                        mcp_result = await self.mcp.submit_order(payload)
+                        span.update(output=mcp_result)
                     logger.debug("MCP result: %s", mcp_result)
                     mcp_tool_calls = [
                         {
@@ -99,7 +120,14 @@ class FoodOrderAgent:
                             "result": mcp_result,
                         }
                     ]
-                    self._awaiting_confirmation = False
+                    if mcp_result.get("success") is False:
+                        error = mcp_result.get("error", "Unknown error")
+                        result["text"] = (
+                            f"Sorry, your order couldn't be submitted: {error}. Please try again."
+                        )
+                        self._awaiting_confirmation = True
+                    else:
+                        self._awaiting_confirmation = False
 
         # Track confirmation state
         for tc in result["tool_calls_made"]:
@@ -148,6 +176,14 @@ class FoodOrderAgent:
         tool_calls: list | None = None,
         tool_calls_made: list | None = None,
     ) -> dict:
+        """
+        Build the response dictionary.
+
+        :param message: The message
+        :param tool_calls: The tool calls
+        :param tool_calls_made: The tool calls made
+        :return: The response dictionary
+        """
         result: dict = {"message": message}
         if tool_calls:
             result["tool_calls"] = tool_calls
@@ -164,13 +200,6 @@ class FoodOrderAgent:
     ) -> None:
         snapshot = self.order_manager.get_snapshot()
         self.logger.log_turn(
-            user_message=message,
-            tool_calls_made=tool_calls_made,
-            response=response,
-            mcp_tool_calls=mcp_tool_calls,
-            order_snapshot=snapshot,
-        )
-        self.trace.add_turn(
             user_message=message,
             tool_calls_made=tool_calls_made,
             response=response,
