@@ -43,5 +43,5 @@ class Order(BaseModel):
                 }
                 for item in self.items
             ],
-            "special_instructions": self.special_instructions,
+            "special_instructions": self.special_instructions or "",
         }
