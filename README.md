@@ -29,9 +29,11 @@ cp .env.example .env
 Open `.env` and fill in your keys:
 
 ```
-GEMINI_API_KEY=<your key from aistudio.google.com>
+GEMINI_API_KEY=<your key>
 APPLICANT_EMAIL=<your email>
 ```
+
+To get a Gemini API key: go to [Google AI Studio](https://aistudio.google.com/apikey), sign in with your Google account, and click **Create API Key**. It's free and takes about 10 seconds.
 
 Run it:
 
