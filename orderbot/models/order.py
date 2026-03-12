@@ -33,15 +33,18 @@ class Order(BaseModel):
 
     def to_submit_payload(self) -> dict:
         """Convert to the exact schema expected by submit_order MCP tool."""
-        return {
+        payload = {
             "items": [
                 {
                     "item_id": item.item_id,
                     "quantity": item.quantity,
                     "options": item.options,
                     "extras": item.extras,
+                    **({"special_instructions": item.special_instructions}
+                       if item.special_instructions else {}),
                 }
                 for item in self.items
             ],
             "special_instructions": self.special_instructions or "",
         }
+        return payload
