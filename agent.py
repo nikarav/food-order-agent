@@ -58,6 +58,7 @@ class FoodOrderAgent:
         """Flush Langfuse data and close the event loop."""
         shutdown_langfuse()
         try:
+            self._loop.run_until_complete(self._loop.shutdown_asyncgens())
             self._loop.close()
         except Exception:
             pass
@@ -91,10 +92,9 @@ class FoodOrderAgent:
             tool_executor=self.tool_executor,
         )
 
-        self._history.extend(self._compress_turn(result["history_additions"]))
-        self._trim_history()
-
-        # Check if submit_order sentinel was returned — do the real MCP call
+        # Check if submit_order sentinel was returned — do the real MCP call.
+        # History compression happens AFTER this block so generate_mcp_error_response
+        # receives the clean pre-turn history alongside the uncompressed turn_additions.
         mcp_tool_calls = None
         for tc in result["tool_calls_made"]:
             if tc["name"] == "submit_order":
@@ -108,7 +108,7 @@ class FoodOrderAgent:
                     payload = self.order_manager.order.to_submit_payload()
                     logger.debug("submitting order payload: %s", payload)
                     with lf.start_as_current_observation(
-                        name="mcp_submit_order", as_type="span"
+                        name="mcp_submit_order", as_type="span", input=payload
                     ) as span:
                         mcp_result = await self.mcp.submit_order(payload)
                         span.update(output=mcp_result)
@@ -120,14 +120,56 @@ class FoodOrderAgent:
                             "result": mcp_result,
                         }
                     ]
-                    if mcp_result.get("success") is False:
-                        error = mcp_result.get("error", "Unknown error")
-                        result["text"] = (
-                            f"Sorry, your order couldn't be submitted: {error}. Please try again."
+                    if not mcp_result.get("success"):
+                        result["text"] = await self.llm.generate_mcp_error_response(
+                            history=self._history,
+                            turn_additions=result["history_additions"],
+                            mcp_result=mcp_result,
+                            order_snapshot=snapshot,
+                            menu_text=self.menu_text,
+                            lf=lf,
                         )
                         self._awaiting_confirmation = True
                     else:
                         self._awaiting_confirmation = False
+                        order_id = mcp_result.get("order_id", "N/A")
+                        total = mcp_result.get("total")
+                        estimated_time = mcp_result.get("estimated_time")
+                        total_str = f"${total:.2f}" if isinstance(total, (int, float)) else str(total)
+                        result["text"] = (
+                            f"Your order has been placed! 🎉\n"
+                            f"Order ID: {order_id}\n"
+                            f"Total: {total_str}\n"
+                            f"Estimated time: {estimated_time}"
+                        )
+
+        # Safeguard: if the model claims submission without a real MCP call, block it.
+        # This catches hallucinated success messages (e.g. after a failed retry).
+        submit_tool_called = any(tc["name"] == "submit_order" for tc in result["tool_calls_made"])
+        if not submit_tool_called and mcp_tool_calls is None:
+            submission_phrases = ("submitted", "placed", "on its way", "order is in")
+            if any(p in result["text"].lower() for p in submission_phrases):
+                logger.warning("model claimed submission without calling submit_order — blocking")
+                result["text"] = (
+                    "I wasn't able to submit your order. Please say \"yes\" to try again."
+                )
+
+        # Sync history with the actual response shown to the user.
+        # Several code paths above override result["text"] after the LLM produced its
+        # response (MCP success/failure, confirmation gate, hallucination safeguard).
+        # Without this sync the compressed history would contain the model's original
+        # (stale/hallucinated) text, causing it to repeat the same pattern on future turns.
+        if result["history_additions"]:
+            from google.genai import types
+            last = result["history_additions"][-1]
+            if last.role == "model":
+                result["history_additions"][-1] = types.Content(
+                    role="model",
+                    parts=[types.Part.from_text(text=result["text"])],
+                )
+
+        self._history.extend(self._compress_turn(result["history_additions"]))
+        self._trim_history()
 
         # Track confirmation state
         for tc in result["tool_calls_made"]:
