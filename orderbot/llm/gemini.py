@@ -121,7 +121,10 @@ class GeminiClient(LLMClient):
         except Exception as e:
             logger.warning(f"process_turn failed ({e}), returning fallback")
             text = self._fallback_response(tool_calls_made)
-            history_additions = [user_content]
+            fallback_model = types.Content(
+                role="model", parts=[types.Part.from_text(text=text)],
+            )
+            history_additions = [user_content, fallback_model]
 
         return {
             "text": text,
@@ -209,10 +212,62 @@ class GeminiClient(LLMClient):
         :param args: The arguments to the tool
         :return: The result of the tool execution
         """
-        with lf.start_as_current_observation(name=f"tool:{name}", as_type="tool") as span:
+        with lf.start_as_current_observation(name=f"tool:{name}", as_type="tool", input=args) as span:
             result = await asyncio.to_thread(tool_executor.execute, name, args)
             span.update(output=result)
             return result
+
+    async def generate_mcp_error_response(
+        self,
+        history: list,
+        turn_additions: list,
+        mcp_result: dict,
+        order_snapshot: dict,
+        menu_text: str,
+        lf=None,
+    ) -> str:
+        """
+        Generate a helpful response after MCP submission failure.
+
+        Replaces the sentinel tool result with the real MCP failure dict and does one
+        more generate call so the model can advise the user (e.g. suggest removing items
+        to get under a price limit) rather than returning a hardcoded string.
+
+        turn_additions layout: [user_content, model_FC, tool_results, final_model_text]
+        We keep only [user_content, model_FC] and inject the MCP failure as the real
+        function response, then generate once for the text reply.
+
+        :param history: Compressed conversation history before this turn
+        :param turn_additions: history_additions returned by process_turn (uncompressed)
+        :param mcp_result: The failure dict from MCPClient.submit_order
+        :param order_snapshot: Current order snapshot
+        :param menu_text: Menu text
+        :param lf: Langfuse client
+        :return: A user-facing error message string
+        """
+        lf = lf or get_langfuse_client()
+        system = self._build_system_prompt(menu_text, order_snapshot)
+        fallback = (
+            f"Sorry, your order couldn't be submitted: "
+            f"{mcp_result.get('error', 'Unknown error')}. Please try again."
+        )
+
+        # turn_additions[:2] = [user_content, model_FC_with_submit_order_call]
+        if len(turn_additions) < 2:
+            return fallback
+
+        mcp_response_content = types.Content(
+            role="user",
+            parts=[types.Part.from_function_response(name="submit_order", response=mcp_result)],
+        )
+        contents = list(history) + list(turn_additions[:2]) + [mcp_response_content]
+
+        try:
+            response = await self._generate(contents, system, lf)
+            return (response.text or "").strip() or fallback
+        except Exception as e:
+            logger.warning("MCP error response generation failed: %s", e)
+            return fallback
 
     def _build_system_prompt(self, menu_text: str, order_snapshot: dict) -> str:
         """
