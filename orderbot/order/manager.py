@@ -159,13 +159,14 @@ class OrderManager:
             return {
                 "items": [
                     {
-                        "uid": item.uid,
-                        "name": item.name,
-                        "quantity": item.quantity,
-                        "options": item.options,
-                        "extras": item.extras,
-                        "unit_price": item.unit_price,
-                        "line_total": round(item.unit_price * item.quantity, 2),
+                    "uid": item.uid,
+                    "name": item.name,
+                    "quantity": item.quantity,
+                    "options": item.options,
+                    "extras": item.extras,
+                    "unit_price": item.unit_price,
+                    "line_total": round(item.unit_price * item.quantity, 2),
+                    "special_instructions": item.special_instructions,
                     }
                     for item in self.order.items
                 ],
