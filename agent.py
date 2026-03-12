@@ -4,9 +4,12 @@ Orchestrates tool-calling loop: LLM picks tools → ToolExecutor runs them deter
 """
 
 import asyncio
+import logging
 
 from orderbot.llm.gemini import GeminiClient
 from orderbot.utils.logger import ConversationLogger
+
+logger = logging.getLogger(__name__)
 from orderbot.utils.trace import ConversationTrace
 from orderbot.mcp.client import MCPClient
 from orderbot.models.menu import Menu
@@ -66,7 +69,7 @@ class FoodOrderAgent:
             tool_executor=self.tool_executor,
         )
 
-        # Compress turn to user + final model text only, then append + trim
+        # Compress turn to [user_msg, final_model_text] — order_snapshot re-injected each turn
         self._history.extend(self._compress_turn(result["history_additions"]))
         self._trim_history()
 
@@ -83,7 +86,9 @@ class FoodOrderAgent:
                         )
                         break
                     payload = self.order_manager.order.to_submit_payload()
+                    logger.debug("submitting order payload: %s", payload)
                     mcp_result = await self.mcp.submit_order(payload)
+                    logger.debug("MCP result: %s", mcp_result)
                     mcp_tool_calls = [
                         {
                             "name": "submit_order",
@@ -108,16 +113,15 @@ class FoodOrderAgent:
     @staticmethod
     def _compress_turn(history_additions: list) -> list:
         """
-        Compress a completed turn down to [user_message, final_model_text].
+        Compress a completed turn to [user_message, final_model_text].
 
         Tool FC batches and tool-result contents are dropped because:
-        - The current order state is re-injected via order_snapshot every turn.
-        - Old add_item / modify_item call chains carry zero additional signal.
-        - Dropping them cuts per-turn history cost by ~75% for tool-heavy turns.
+        - order_snapshot is re-injected fresh every turn via the system prompt.
+        - The model only needs conversational context (what was said / confirmed).
+        - Dropping intermediate objects cuts per-turn history cost by ~75%.
 
-        history_additions layout (variable length):
-          [user_content, model_FC, tool_results, ..., final_model_text]
-        We always keep first (user) and last (final model text).
+        Layout: [user_content, model_FC, tool_results..., final_model_text]
+        Keep first (user) and last (final model text) only.
         """
         if len(history_additions) <= 2:
             return history_additions
@@ -125,14 +129,15 @@ class FoodOrderAgent:
 
     def _trim_history(self) -> None:
         """
-        Hard cap: keep at most MAX_HISTORY_TURNS turns in history.
+        Hard cap: keep at most MAX_HISTORY_TURNS turns.
 
         After compression each turn is exactly 2 Content objects, so
-        simple len() / 2 arithmetic is reliable again.
+        simple len() / 2 arithmetic is reliable.
         """
         max_objects = MAX_HISTORY_TURNS * 2
         if len(self._history) > max_objects:
             self._history = self._history[-max_objects:]
+            logger.debug("trimmed history to %d turns", MAX_HISTORY_TURNS)
 
     def _build_response(
         self,
